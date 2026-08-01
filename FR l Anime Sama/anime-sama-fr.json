@@ -2,7 +2,7 @@
   "id": "anime-sama-fr",
   "name": "FR I Anime-Sama",
   "version": "1.2.0",
-  "manifestURI": "https://raw.githubusercontent.com/dynnx/YGG-Torrent-Seanime/main/anime-sama-fr.json",
+  "manifestURI": "https://raw.githubusercontent.com/dynnx/Seanime-French-Sources/refs/heads/main/FR%20l%20Anime%20Sama/anime-sama-fr.json",
   "language": "typescript",
   "type": "onlinestream-provider",
   "description": "Stream French anime (VOSTFR / VF) from Anime-Sama. Search returns one entry per season so episode numbers line up; playback resolves vidmoly (HLS) or sibnet (MP4). No account needed. If anime-sama.to stops working, set a new base URL in the settings.",

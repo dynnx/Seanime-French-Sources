@@ -3,33 +3,35 @@
 /*
  * Nyaa (French) provider for Seanime
  * ----------------------------------
- * Sources anime torrents from Nyaa (https://nyaa.si) and keeps the French
- * releases (VOSTFR / VF / MULTI / FRENCH). Nyaa is public, so no passkey and
- * real magnet links.
+ * Sources anime torrents from Nyaa (https://nyaa.si), keeps the French releases
+ * (VOSTFR / VF / MULTI / FRENCH), and prefers a French dub for auto-select.
+ * Nyaa is public, so no passkey and real magnet links.
  *
- * Language preference (auto-select):
- *   Each result is classified by track:
- *     - "vf"     : French dub  (VF / VFF / VFQ / TRUEFRENCH / FRENCH)
- *     - "multi"  : multi-audio (usually includes a French dub)
- *     - "vostfr" : French subs over Japanese audio (VOSTFR / VOST)
- *     - "other"  : French-tagged but unclassified
- *   Results are sorted by the configured preference (default: VF, then VOSTFR)
- *   and the top pick of the best available track is flagged isBestRelease, so
- *   Seanime's auto-select grabs a VF when one exists and falls back to VOSTFR
- *   otherwise. All results still appear in the list for manual picking.
+ * Season / episode handling (the important bit):
+ *   Seanime does NOT hand providers a plain "season number"; it gives the
+ *   seasonal episode number plus `absoluteSeasonOffset` (episodes before this
+ *   season). We DON'T guess a season number and jam "S0X" into the query — that
+ *   produced wrong-season results. Instead:
+ *     - offset === 0  => treat as first season. Drop releases explicitly tagged
+ *       as a later season (S02+, "Season 2", "Saison 2"), and drop single
+ *       episodes numbered past this season's length.
+ *     - offset  >  0  => a sequel. Keep episodes whose number falls in this
+ *       season's seasonal range [1..epCount] OR its absolute range
+ *       [offset+1 .. offset+epCount]; drop clearly out-of-range singles.
+ *     - When a specific episode is requested, keep only releases matching that
+ *       episode in EITHER seasonal or absolute numbering (or batches / unknown).
+ *   Parsed absolute numbers are converted back to seasonal so they line up with
+ *   what Seanime asked for.
  *
- * Season / episode alignment:
- *   Smart search asks Nyaa for BOTH the seasonal episode number Seanime wants
- *   and its absolute equivalent (episode + absoluteSeasonOffset), because many
- *   groups number episodes absolutely across seasons. Parsed absolute numbers
- *   are converted back to the season's numbering so they line up with Seanime.
+ * Language preference: VF (dub) > MULTI > VOSTFR > other by default; the top
+ * pick of the best available track is flagged so Seanime auto-selects it.
  */
 
 interface NyaaItem {
     title: string
-    link: string        // direct .torrent download URL
-    guid: string        // torrent view page
-    pubDate: string     // normalised to RFC3339
+    link: string
+    guid: string
+    pubDate: string
     seeders: number
     leechers: number
     downloads: number
@@ -39,9 +41,10 @@ interface NyaaItem {
 }
 
 interface EpisodeCtx {
-    requestedEp: number   // seasonal episode Seanime asked for (0 = none)
-    offset: number        // media.absoluteSeasonOffset
-    epCount: number       // media.episodeCount (season length, -1 unknown)
+    requestedEp: number
+    offset: number
+    epCount: number
+    isFirstSeason: boolean
 }
 
 const USER_AGENT = "Seanime-Nyaa-FR/1.1"
@@ -59,8 +62,11 @@ const MONTHS: Record<string, number> = {
     Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11,
 }
 
-// Any French / French-inclusive marker (used to keep or drop a release).
 const FRENCH_RE = /(vostfr|vost\.fr|truefrench|\bfrench\b|\bmulti\b|\bvff?\b|\bvfq\b|\bvfi\b|\bvost\b|\[fr\]|\(fr\)|\bfr\b|\bfre\b|\bfra\b)/i
+
+// Batch / pack markers. NOTE: bare "season"/"saison" is deliberately excluded —
+// per-episode releases routinely contain the season word ("Show Saison 2 - 05").
+const BATCH_RE = /(\bbatch\b|\bcomplete\b|\bcomplet\b|int[eé]grale|\bintegrale\b|\bfull\s*season\b|\d{1,3}\s*[~-]\s*\d{1,3})/i
 
 class Provider {
 
@@ -105,7 +111,6 @@ class Provider {
         if (sortMode === "seeders") { params.push("s=seeders"); params.push("o=desc") }
         else if (sortMode === "downloads") { params.push("s=downloads"); params.push("o=desc") }
         else if (sortMode === "size") { params.push("s=size"); params.push("o=desc") }
-        // "date" -> Nyaa's default order (newest first), so no sort param.
         if (text) params.push("q=" + encodeURIComponent(text))
 
         return cfg.baseUrl + "/?" + params.join("&")
@@ -180,10 +185,44 @@ class Provider {
         return items
     }
 
-    // ---- Language classification + ranking ---------------------------------
+    // ---- Parsing helpers ---------------------------------------------------
 
     private isFrench(title: string): boolean {
         return FRENCH_RE.test(title || "")
+    }
+
+    private isBatchTitle(title: string): boolean {
+        if (BATCH_RE.test(title || "")) return true
+        try {
+            const m = $habari.parse(title)
+            if ((m.episode_number || []).length > 1) return true
+        } catch (e) { /* best-effort */ }
+        return false
+    }
+
+    // Explicit season number declared in the title, or -1.
+    private parseReleaseSeason(title: string): number {
+        const t = title || ""
+        let m = t.match(/\bS(\d{1,2})(?:E\d{1,3})?\b/i)
+        if (m) return parseInt(m[1], 10)
+        m = t.match(/\b(?:Season|Saison)\s*(\d{1,2})\b/i)
+        if (m) return parseInt(m[1], 10)
+        m = t.match(/\b(\d{1,2})\s*(?:st|nd|rd|th|[eè]me|er)\s+(?:Season|Saison)\b/i)
+        if (m) return parseInt(m[1], 10)
+        return -1
+    }
+
+    // Single episode number parsed from the title, or -1 (batches -> -1).
+    private parseRawEpisode(title: string): number {
+        try {
+            const meta = $habari.parse(title)
+            const eps = meta.episode_number || []
+            if (eps.length === 1) {
+                const n = parseInt(eps[0], 10)
+                return isNaN(n) ? -1 : n
+            }
+        } catch (e) { /* best-effort */ }
+        return -1
     }
 
     // "vf" | "multi" | "vostfr" | "other"
@@ -200,24 +239,36 @@ class Provider {
         return m ? parseInt(m[1], 10) : 0
     }
 
-    // Sort by language preference, then seeders, then resolution. Flags the top
-    // pick of the best available track as the best release for auto-select.
-    private rankByLanguage(torrents: AnimeTorrent[]): AnimeTorrent[] {
-        const pref = this.getConfig().audioPref
-        const order: Record<string, number> = pref === "vostfr"
-            ? { vostfr: 0, vf: 1, multi: 2, other: 3 }
-            : { vf: 0, multi: 1, vostfr: 2, other: 3 }
+    // ---- Season / episode filtering ---------------------------------------
 
-        const arr = torrents.map((t) => {
-            const cls = this.classifyLang(t.name)
-            const r = (order[cls] !== undefined) ? order[cls] : 3
-            return { t: t, r: r, s: t.seeders || 0, res: this.resScore(t.resolution) }
-        })
-        arr.sort((a, b) => (a.r - b.r) || (b.s - a.s) || (b.res - a.res))
+    private keepForSeason(title: string, f: EpisodeCtx): boolean {
+        const batch = this.isBatchTitle(title)
+        const relSeason = this.parseReleaseSeason(title)
+        const rawEp = batch ? -1 : this.parseRawEpisode(title)
 
-        const out = arr.map((x) => x.t)
-        if (out.length) out[0].isBestRelease = true
-        return out
+        // First-season selection: reject explicit later seasons and over-length singles.
+        if (f.isFirstSeason) {
+            if (relSeason >= 2) return false
+            if (f.epCount > 0 && !batch && rawEp > 0 && rawEp > f.epCount) return false
+        }
+
+        // Specific episode requested: match seasonal OR absolute numbering.
+        if (f.requestedEp > 0 && !batch && rawEp > 0) {
+            const wantAbs = f.offset > 0 ? f.requestedEp + f.offset : f.requestedEp
+            return rawEp === f.requestedEp || rawEp === wantAbs
+        }
+
+        // Sequel browse with known length: keep in-range singles only.
+        if (!f.isFirstSeason && f.offset > 0 && f.epCount > 0 && !batch && rawEp > 0) {
+            const inSeasonal = rawEp >= 1 && rawEp <= f.epCount
+            const inAbsolute = rawEp >= (f.offset + 1) && rawEp <= (f.offset + f.epCount)
+            if (!inSeasonal && !inAbsolute) return false
+        }
+        return true
+    }
+
+    private filterItems(items: NyaaItem[], f: EpisodeCtx): NyaaItem[] {
+        return items.filter((it) => this.keepForSeason(it.title, f))
     }
 
     // ---- Small utilities ---------------------------------------------------
@@ -273,8 +324,6 @@ class Provider {
         return mag
     }
 
-    // Convert a parsed episode number to the season's numbering when the release
-    // used absolute numbering across seasons.
     private normalizeEpisode(rawEp: number, ctx: EpisodeCtx): number {
         if (rawEp < 0) return -1
         const offset = ctx.offset || 0
@@ -288,7 +337,7 @@ class Provider {
         return rawEp
     }
 
-    // ---- Result mapping ----------------------------------------------------
+    // ---- Result mapping + ranking -----------------------------------------
 
     private mapItem(it: NyaaItem, ctx: EpisodeCtx): AnimeTorrent {
         let resolution = ""
@@ -308,11 +357,9 @@ class Provider {
             } else if (eps.length > 1) {
                 isBatch = true
             }
-        } catch (e) { /* parsing is best-effort */ }
+        } catch (e) { /* best-effort */ }
 
-        if (!isBatch && /(\bbatch\b|\bcomplete\b|\bcomplet\b|int[eé]grale|\bsaison\b|\bseason\b|\d{1,3}\s*[-~]\s*\d{1,3})/i.test(it.title)) {
-            isBatch = true
-        }
+        if (!isBatch && BATCH_RE.test(it.title)) isBatch = true
 
         return {
             provider: "nyaa-fr",
@@ -336,14 +383,32 @@ class Provider {
         }
     }
 
-    private async query(text: string, opts?: { category?: string; sort?: string }): Promise<NyaaItem[]> {
-        const url = this.buildRssUrl(text, opts)
-        const xml = await this.fetchRss(url)
-        let items = this.parseRss(xml)
-        if (this.getConfig().frenchOnly) {
-            items = items.filter((it) => this.isFrench(it.title))
+    private rankByLanguage(torrents: AnimeTorrent[]): AnimeTorrent[] {
+        const pref = this.getConfig().audioPref
+        const order: Record<string, number> = pref === "vostfr"
+            ? { vostfr: 0, vf: 1, multi: 2, other: 3 }
+            : { vf: 0, multi: 1, vostfr: 2, other: 3 }
+
+        const arr = torrents.map((t) => {
+            const cls = this.classifyLang(t.name)
+            const r = (order[cls] !== undefined) ? order[cls] : 3
+            return { t: t, r: r, s: t.seeders || 0, res: this.resScore(t.resolution) }
+        })
+        arr.sort((a, b) => (a.r - b.r) || (b.s - a.s) || (b.res - a.res))
+
+        const out = arr.map((x) => x.t)
+        if (out.length) out[0].isBestRelease = true
+        return out
+    }
+
+    private buildCtx(media: any, requestedEp: number): EpisodeCtx {
+        const offset = media.absoluteSeasonOffset || 0
+        return {
+            requestedEp: requestedEp,
+            offset: offset,
+            epCount: media.episodeCount || -1,
+            isFirstSeason: offset === 0,
         }
-        return items
     }
 
     private finalize(items: NyaaItem[], ctx: EpisodeCtx): AnimeTorrent[] {
@@ -379,39 +444,38 @@ class Provider {
         const media: any = opts.media || {}
         const query = (opts.query || media.romajiTitle || (media.englishTitle || "") || "").trim()
         if (!query) return []
-        const items = await this.query(query)
-        const ctx: EpisodeCtx = { requestedEp: 0, offset: media.absoluteSeasonOffset || 0, epCount: media.episodeCount || -1 }
+        const ctx = this.buildCtx(media, 0)
+        const items = this.filterItems(await this.query(query), ctx)
         return this.rankByLanguage(this.finalize(items, ctx))
     }
 
     async smartSearch(opts: AnimeSmartSearchOptions): Promise<AnimeTorrent[]> {
         const media: any = opts.media || {}
-        const offset = media.absoluteSeasonOffset || 0
-        const epCount = media.episodeCount || -1
         const userQuery = (opts.query || "").trim()
         const ep = (!opts.batch && opts.episodeNumber && opts.episodeNumber > 0) ? opts.episodeNumber : 0
+        const ctx = this.buildCtx(media, ep)
 
-        // Title variants + detected season.
+        // Title variants (romaji + english first, then Seanime's cleaned variants).
+        // We do NOT inject a season number into the query — season is handled by
+        // filtering, not by search text.
         const candidates: string[] = []
         if (media.romajiTitle) candidates.push(media.romajiTitle)
         if (media.englishTitle) candidates.push(media.englishTitle)
         if (media.synonyms) for (const s of media.synonyms) if (s) candidates.push(s)
 
         let builtTitles: string[] = []
-        let season = -1
         try {
             const built = $scannerUtils.buildSmartSearchTitles(candidates.length ? candidates : [""])
             if (built && built.titles) builtTitles = built.titles
-            if (built) season = built.season
         } catch (e) { /* fall back below */ }
 
         const bases = userQuery
             ? [userQuery]
-            : this.uniqueTitles(builtTitles.concat([media.romajiTitle || "", media.englishTitle || ""]), 2)
+            : this.uniqueTitles([media.romajiTitle || "", media.englishTitle || ""].concat(builtTitles), 3)
         if (!bases.length) return []
 
-        // Build a deduped query set. Episode-targeted queries cover BOTH the
-        // seasonal number and the absolute number (ep + offset), padded/unpadded.
+        // Query set: plain title (batches/packs/all episodes) + episode-targeted
+        // queries covering seasonal AND absolute numbering, padded/unpadded.
         const queries: string[] = []
         const seenQ: Record<string, boolean> = {}
         const addQ = (q: string) => {
@@ -430,11 +494,10 @@ class Provider {
 
         for (let i = 0; i < bases.length; i++) {
             const b = bases[i]
-            addQ(b)                                   // plain: batches, season packs, all episodes
-            if (!userQuery && season > 1) addQ(b + " S" + this.pad2(season))
+            addQ(b)
             if (ep > 0) {
-                addEp(b, ep)                          // seasonal numbering
-                if (offset > 0) addEp(b, ep + offset) // absolute numbering
+                addEp(b, ep)
+                if (ctx.offset > 0) addEp(b, ep + ctx.offset)
             }
         }
 
@@ -444,14 +507,14 @@ class Provider {
             collected = collected.concat(await this.query(capped[i]))
         }
 
-        const ctx: EpisodeCtx = { requestedEp: ep, offset: offset, epCount: epCount }
-        return this.rankByLanguage(this.finalize(collected, ctx))
+        const filtered = this.filterItems(collected, ctx)
+        return this.rankByLanguage(this.finalize(filtered, ctx))
     }
 
     async getLatest(): Promise<AnimeTorrent[]> {
         const items = await this.query("", { sort: "date" })
-        const ctx: EpisodeCtx = { requestedEp: 0, offset: 0, epCount: -1 }
-        return this.finalize(items, ctx)   // keep chronological, no language re-sort
+        const ctx: EpisodeCtx = { requestedEp: 0, offset: 0, epCount: -1, isFirstSeason: false }
+        return this.finalize(items, ctx)
     }
 
     async getTorrentInfoHash(torrent: AnimeTorrent): Promise<string> {
@@ -461,5 +524,15 @@ class Provider {
     async getTorrentMagnetLink(torrent: AnimeTorrent): Promise<string> {
         if (torrent.magnetLink) return torrent.magnetLink
         return this.buildMagnet(torrent.infoHash, torrent.name)
+    }
+
+    private async query(text: string, opts?: { category?: string; sort?: string }): Promise<NyaaItem[]> {
+        const url = this.buildRssUrl(text, opts)
+        const xml = await this.fetchRss(url)
+        let items = this.parseRss(xml)
+        if (this.getConfig().frenchOnly) {
+            items = items.filter((it) => this.isFrench(it.title))
+        }
+        return items
     }
 }

@@ -1,7 +1,7 @@
 {
   "id": "nyaa-fr",
   "name": "FR I Nyaa",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "manifestURI": "https://raw.githubusercontent.com/dynnx/Seanime-French-Sources/main/FR%20I%20Nyaa/nyaa-fr.json",
   "language": "typescript",
   "type": "anime-torrent-provider",

@@ -30,6 +30,7 @@ There's nothing you *have* to configure — the defaults are tuned for French an
 | Setting | Default | What it does |
 |---|---|---|
 | **French only** | On | Keeps only releases tagged VOSTFR / VF / MULTI / FRENCH. Turn off to see every language in the category. |
+| **Audio preference** | Prefer VF, then VOSTFR | Which track auto-select grabs first. "Prefer VF" picks a French dub when one exists and falls back to VOSTFR; flip it to prefer French subs instead. All results still show for manual picking. |
 | **Category** | Non-English-translated (`1_3`) | Nyaa category to search. `1_3` is where French subs live. "All anime" (`1_0`) casts the widest net and also catches French MULTI releases filed under other categories. "English-translated" (`1_2`) if you want English too. |
 | **Sort** | Seeders | Seeders (best for streaming), Newest, Most downloaded, or Largest. |
 | **Trusted only** | Off | Restricts to trusted uploaders. Cuts junk but drops *most* French results — leave off unless you're drowning in fakes. |
@@ -39,7 +40,8 @@ There's nothing you *have* to configure — the defaults are tuned for French an
 
 ## How it works / tips
 
-- **Smart search** uses Seanime's title variants + season detection, runs a broad search plus a targeted per-episode search, then filters to French. **Regular search** just runs your query (or the media title) through the French filter.
+- **Auto-select prefers VF, then VOSTFR** (configurable). Every result is classified — VF (French dub), MULTI (usually includes a dub), VOSTFR (French subs), or other — sorted by that preference, and the top pick of the best available track is flagged so Seanime grabs it automatically. The rest still appear for manual picking.
+- **Smart search** searches multiple title variants (romaji + English), detects the season, and — for shows numbered continuously across seasons — asks Nyaa for **both** the seasonal episode number and its absolute equivalent (`episode + absoluteSeasonOffset`), then converts absolute numbers back to the season's numbering so episodes line up with Seanime. **Regular search** runs your query (or the media title) through the French filter.
 - **If a show returns nothing**, it's almost always French availability, not a bug. Try, in order: switch **Category** to "All anime", or turn **French only** off to confirm the title exists on Nyaa at all. Popular/seasonal shows are reliably subbed in French; niche or older titles can be spotty.
 - **Batches** (full seasons / `01-12` / "Complete") are detected and flagged so Seanime's batch toggle works.
 - Sizes, dates, seeders/leechers, release group and resolution are parsed per result so Seanime's sorting and episode matching behave normally.

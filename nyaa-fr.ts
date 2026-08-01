@@ -4,21 +4,25 @@
  * Nyaa (French) provider for Seanime
  * ----------------------------------
  * Sources anime torrents from Nyaa (https://nyaa.si) and keeps the French
- * releases (VOSTFR / VF / MULTI / FRENCH). Built after YggTorrent + yggapi.eu
- * went dark — Nyaa is public and hit directly, so there is no fragile proxy to
- * die on you and, crucially, NO PASSKEY to configure.
+ * releases (VOSTFR / VF / MULTI / FRENCH). Nyaa is public, so no passkey and
+ * real magnet links.
  *
- * How it works:
- *   - Search / smart search  -> Nyaa's RSS endpoint (/?page=rss&q=...&c=1_3)
- *                               category 1_3 = "Anime - Non-English-translated",
- *                               where French subs live. Results are then filtered
- *                               to French-tagged releases.
- *   - Nyaa is a PUBLIC tracker (DHT on), so we hand Seanime a real magnet link
- *     built from the info hash in the RSS, plus the direct .torrent download URL.
- *     No passkey, no login.
+ * Language preference (auto-select):
+ *   Each result is classified by track:
+ *     - "vf"     : French dub  (VF / VFF / VFQ / TRUEFRENCH / FRENCH)
+ *     - "multi"  : multi-audio (usually includes a French dub)
+ *     - "vostfr" : French subs over Japanese audio (VOSTFR / VOST)
+ *     - "other"  : French-tagged but unclassified
+ *   Results are sorted by the configured preference (default: VF, then VOSTFR)
+ *   and the top pick of the best available track is flagged isBestRelease, so
+ *   Seanime's auto-select grabs a VF when one exists and falls back to VOSTFR
+ *   otherwise. All results still appear in the list for manual picking.
  *
- * Everything is configurable in the extension settings (see the README): French
- * filter on/off, category, sort order, trusted-only, and a mirror base URL.
+ * Season / episode alignment:
+ *   Smart search asks Nyaa for BOTH the seasonal episode number Seanime wants
+ *   and its absolute equivalent (episode + absoluteSeasonOffset), because many
+ *   groups number episodes absolutely across seasons. Parsed absolute numbers
+ *   are converted back to the season's numbering so they line up with Seanime.
  */
 
 interface NyaaItem {
@@ -34,10 +38,14 @@ interface NyaaItem {
     categoryId: string
 }
 
-const USER_AGENT = "Seanime-Nyaa-FR/1.0"
+interface EpisodeCtx {
+    requestedEp: number   // seasonal episode Seanime asked for (0 = none)
+    offset: number        // media.absoluteSeasonOffset
+    epCount: number       // media.episodeCount (season length, -1 unknown)
+}
 
-// Public trackers Nyaa torrents announce to — bolted onto constructed magnets so
-// they resolve peers even for clients that lean on trackers over DHT.
+const USER_AGENT = "Seanime-Nyaa-FR/1.1"
+
 const TRACKERS = [
     "http://nyaa.tracker.wf:7777/announce",
     "udp://open.stealth.si:80/announce",
@@ -51,8 +59,8 @@ const MONTHS: Record<string, number> = {
     Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11,
 }
 
-// Markers that flag a release as French (or French-inclusive, e.g. MULTI).
-const FRENCH_RE = /(vostfr|vost\.fr|truefrench|\bfrench\b|\bmulti\b|\bvff?\b|\bvfq\b|\bvfi\b|\[fr\]|\(fr\)|\bfr\b|\bfre\b|\bfra\b)/i
+// Any French / French-inclusive marker (used to keep or drop a release).
+const FRENCH_RE = /(vostfr|vost\.fr|truefrench|\bfrench\b|\bmulti\b|\bvff?\b|\bvfq\b|\bvfi\b|\bvost\b|\[fr\]|\(fr\)|\bfr\b|\bfre\b|\bfra\b)/i
 
 class Provider {
 
@@ -70,8 +78,9 @@ class Provider {
 
         const frenchOnly = (($getUserPreference("frenchOnly") || "true") === "true")
         const trustedOnly = (($getUserPreference("trustedOnly") || "false") === "true")
+        const audioPref = (($getUserPreference("audioPref") || "vf") === "vostfr") ? "vostfr" : "vf"
 
-        return { baseUrl, category, sort, frenchOnly, trustedOnly }
+        return { baseUrl, category, sort, frenchOnly, trustedOnly, audioPref }
     }
 
     getSettings(): AnimeProviderSettings {
@@ -171,11 +180,47 @@ class Provider {
         return items
     }
 
-    // ---- Small utilities ---------------------------------------------------
+    // ---- Language classification + ranking ---------------------------------
 
     private isFrench(title: string): boolean {
         return FRENCH_RE.test(title || "")
     }
+
+    // "vf" | "multi" | "vostfr" | "other"
+    private classifyLang(name: string): string {
+        const t = " " + (name || "").toLowerCase() + " "
+        if (/\bvff?\b|\bvfq\b|\bvfi\b|\btruefrench\b|\bfrench\b/.test(t)) return "vf"
+        if (/\bmulti\b/.test(t)) return "multi"
+        if (/\bvostfr\b|\bvost\b|vost\.fr/.test(t)) return "vostfr"
+        return "other"
+    }
+
+    private resScore(res: string): number {
+        const m = (res || "").match(/(\d{3,4})/)
+        return m ? parseInt(m[1], 10) : 0
+    }
+
+    // Sort by language preference, then seeders, then resolution. Flags the top
+    // pick of the best available track as the best release for auto-select.
+    private rankByLanguage(torrents: AnimeTorrent[]): AnimeTorrent[] {
+        const pref = this.getConfig().audioPref
+        const order: Record<string, number> = pref === "vostfr"
+            ? { vostfr: 0, vf: 1, multi: 2, other: 3 }
+            : { vf: 0, multi: 1, vostfr: 2, other: 3 }
+
+        const arr = torrents.map((t) => {
+            const cls = this.classifyLang(t.name)
+            const r = (order[cls] !== undefined) ? order[cls] : 3
+            return { t: t, r: r, s: t.seeders || 0, res: this.resScore(t.resolution) }
+        })
+        arr.sort((a, b) => (a.r - b.r) || (b.s - a.s) || (b.res - a.res))
+
+        const out = arr.map((x) => x.t)
+        if (out.length) out[0].isBestRelease = true
+        return out
+    }
+
+    // ---- Small utilities ---------------------------------------------------
 
     private sizeToBytes(s: string): number {
         if (!s) return 0
@@ -194,7 +239,6 @@ class Provider {
 
     private toRfc3339(pubDate: string): string {
         if (!pubDate) return ""
-        // Nyaa RSS pubDate is always UTC, e.g. "Mon, 01 Jul 2026 12:34:56 -0000".
         const m = pubDate.match(/(\d{1,2})\s+(\w{3})\s+(\d{4})\s+(\d{2}):(\d{2}):(\d{2})/)
         if (m) {
             const mon = MONTHS[m[2]]
@@ -218,7 +262,7 @@ class Provider {
         return n.toFixed(decimals) + " " + units[i]
     }
 
-    private zeroPad2(n: number): string {
+    private pad2(n: number): string {
         return n < 10 ? "0" + n : "" + n
     }
 
@@ -229,9 +273,24 @@ class Provider {
         return mag
     }
 
+    // Convert a parsed episode number to the season's numbering when the release
+    // used absolute numbering across seasons.
+    private normalizeEpisode(rawEp: number, ctx: EpisodeCtx): number {
+        if (rawEp < 0) return -1
+        const offset = ctx.offset || 0
+        if (offset > 0) {
+            if (ctx.requestedEp > 0 && rawEp === ctx.requestedEp + offset) return ctx.requestedEp
+            if (ctx.epCount > 0 && rawEp > ctx.epCount) {
+                const seasonal = rawEp - offset
+                if (seasonal >= 1) return seasonal
+            }
+        }
+        return rawEp
+    }
+
     // ---- Result mapping ----------------------------------------------------
 
-    private mapItem(it: NyaaItem): AnimeTorrent {
+    private mapItem(it: NyaaItem, ctx: EpisodeCtx): AnimeTorrent {
         let resolution = ""
         let releaseGroup = ""
         let episodeNumber = -1
@@ -245,7 +304,7 @@ class Provider {
             const eps = meta.episode_number || []
             if (eps.length === 1) {
                 const n = parseInt(eps[0], 10)
-                if (!isNaN(n)) episodeNumber = n
+                if (!isNaN(n)) episodeNumber = this.normalizeEpisode(n, ctx)
             } else if (eps.length > 1) {
                 isBatch = true
             }
@@ -265,8 +324,8 @@ class Provider {
             leechers: it.leechers || 0,
             downloadCount: it.downloads || 0,
             link: it.guid || it.link || "",
-            downloadUrl: it.link || "",                          // public .torrent, no auth
-            magnetLink: this.buildMagnet(it.infoHash, it.title),  // public tracker: real magnet
+            downloadUrl: it.link || "",
+            magnetLink: this.buildMagnet(it.infoHash, it.title),
             infoHash: it.infoHash || "",
             resolution: resolution,
             isBatch: isBatch,
@@ -287,14 +346,29 @@ class Provider {
         return items
     }
 
-    private finalize(items: NyaaItem[]): AnimeTorrent[] {
+    private finalize(items: NyaaItem[], ctx: EpisodeCtx): AnimeTorrent[] {
         const seen: Record<string, boolean> = {}
         const out: AnimeTorrent[] = []
         for (const it of items) {
             const key = it.infoHash || it.guid || it.link
             if (!key || seen[key]) continue
             seen[key] = true
-            out.push(this.mapItem(it))
+            out.push(this.mapItem(it, ctx))
+        }
+        return out
+    }
+
+    private uniqueTitles(list: string[], limit: number): string[] {
+        const seen: Record<string, boolean> = {}
+        const out: string[] = []
+        for (const s of list) {
+            const v = (s || "").trim()
+            if (!v) continue
+            const k = v.toLowerCase()
+            if (seen[k]) continue
+            seen[k] = true
+            out.push(v)
+            if (out.length >= limit) break
         }
         return out
     }
@@ -306,56 +380,81 @@ class Provider {
         const query = (opts.query || media.romajiTitle || (media.englishTitle || "") || "").trim()
         if (!query) return []
         const items = await this.query(query)
-        return this.finalize(items)
+        const ctx: EpisodeCtx = { requestedEp: 0, offset: media.absoluteSeasonOffset || 0, epCount: media.episodeCount || -1 }
+        return this.rankByLanguage(this.finalize(items, ctx))
     }
 
     async smartSearch(opts: AnimeSmartSearchOptions): Promise<AnimeTorrent[]> {
         const media: any = opts.media || {}
+        const offset = media.absoluteSeasonOffset || 0
+        const epCount = media.episodeCount || -1
+        const userQuery = (opts.query || "").trim()
+        const ep = (!opts.batch && opts.episodeNumber && opts.episodeNumber > 0) ? opts.episodeNumber : 0
 
+        // Title variants + detected season.
         const candidates: string[] = []
         if (media.romajiTitle) candidates.push(media.romajiTitle)
         if (media.englishTitle) candidates.push(media.englishTitle)
         if (media.synonyms) for (const s of media.synonyms) if (s) candidates.push(s)
 
-        let primaryTitle = ""
+        let builtTitles: string[] = []
         let season = -1
         try {
             const built = $scannerUtils.buildSmartSearchTitles(candidates.length ? candidates : [""])
-            if (built && built.titles && built.titles.length) primaryTitle = built.titles[0]
+            if (built && built.titles) builtTitles = built.titles
             if (built) season = built.season
         } catch (e) { /* fall back below */ }
-        if (!primaryTitle) primaryTitle = (media.romajiTitle || media.englishTitle || "").trim()
 
-        const userQuery = (opts.query || "").trim()
-        let baseQuery = userQuery || primaryTitle
-        if (!userQuery && season > 1) baseQuery = baseQuery + " S" + this.zeroPad2(season)
-        if (opts.resolution) baseQuery = baseQuery + " " + opts.resolution
-        if (!baseQuery.trim()) return []
+        const bases = userQuery
+            ? [userQuery]
+            : this.uniqueTitles(builtTitles.concat([media.romajiTitle || "", media.englishTitle || ""]), 2)
+        if (!bases.length) return []
 
-        let collected: NyaaItem[] = []
-
-        // Broad title search (surfaces batches + episodes).
-        collected = collected.concat(await this.query(baseQuery))
-
-        // Targeted episode query so a specific episode still shows up for
-        // long-running shows whose episodes fall past the first RSS page.
-        if (!opts.batch && opts.episodeNumber && opts.episodeNumber > 0) {
-            let epQuery = (userQuery || primaryTitle) + " " + this.zeroPad2(opts.episodeNumber)
-            if (opts.resolution) epQuery += " " + opts.resolution
-            collected = collected.concat(await this.query(epQuery))
+        // Build a deduped query set. Episode-targeted queries cover BOTH the
+        // seasonal number and the absolute number (ep + offset), padded/unpadded.
+        const queries: string[] = []
+        const seenQ: Record<string, boolean> = {}
+        const addQ = (q: string) => {
+            const v = (q || "").trim()
+            if (!v) return
+            const k = v.toLowerCase()
+            if (seenQ[k]) return
+            seenQ[k] = true
+            queries.push(v)
+        }
+        const addEp = (base: string, n: number) => {
+            if (n <= 0) return
+            addQ(base + " " + this.pad2(n))
+            if (n < 10) addQ(base + " " + n)
         }
 
-        return this.finalize(collected)
+        for (let i = 0; i < bases.length; i++) {
+            const b = bases[i]
+            addQ(b)                                   // plain: batches, season packs, all episodes
+            if (!userQuery && season > 1) addQ(b + " S" + this.pad2(season))
+            if (ep > 0) {
+                addEp(b, ep)                          // seasonal numbering
+                if (offset > 0) addEp(b, ep + offset) // absolute numbering
+            }
+        }
+
+        let collected: NyaaItem[] = []
+        const capped = queries.slice(0, 10)
+        for (let i = 0; i < capped.length; i++) {
+            collected = collected.concat(await this.query(capped[i]))
+        }
+
+        const ctx: EpisodeCtx = { requestedEp: ep, offset: offset, epCount: epCount }
+        return this.rankByLanguage(this.finalize(collected, ctx))
     }
 
     async getLatest(): Promise<AnimeTorrent[]> {
-        // Newest French releases in the configured category.
         const items = await this.query("", { sort: "date" })
-        return this.finalize(items)
+        const ctx: EpisodeCtx = { requestedEp: 0, offset: 0, epCount: -1 }
+        return this.finalize(items, ctx)   // keep chronological, no language re-sort
     }
 
     async getTorrentInfoHash(torrent: AnimeTorrent): Promise<string> {
-        // Nyaa's RSS already gave us the info hash at search time.
         return torrent.infoHash || ""
     }
 

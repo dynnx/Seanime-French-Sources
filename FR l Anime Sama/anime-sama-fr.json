@@ -1,7 +1,7 @@
 {
   "id": "anime-sama-fr",
   "name": "FR I Anime-Sama",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "manifestURI": "https://raw.githubusercontent.com/dynnx/Seanime-French-Sources/main/FR%20l%20Anime%20Sama/anime-sama-fr.json",
   "language": "typescript",
   "type": "onlinestream-provider",

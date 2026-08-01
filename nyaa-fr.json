@@ -1,15 +1,15 @@
 {
   "id": "nyaa-fr",
   "name": "Nyaa (French)",
-  "version": "1.0.0",
-  "manifestURI": "",
+  "version": "1.0.1",
+  "manifestURI": "https://raw.githubusercontent.com/dynnx/YGG-Torrent-Seanime/main/nyaa-fr.json",
   "language": "typescript",
   "type": "anime-torrent-provider",
   "description": "Anime torrents from Nyaa, filtered to French releases (VOSTFR / VF / MULTI). Nyaa is a public tracker, so this needs NO passkey and hands Seanime real magnet links. Searches the 'Non-English-translated' category by default; toggle the French filter, category, sort, and mirror in the settings.",
   "author": "Ryan",
   "icon": "",
   "website": "https://nyaa.si",
-  "readme": "",
+  "readme": "https://raw.githubusercontent.com/dynnx/YGG-Torrent-Seanime/main/README.md",
   "lang": "fr",
   "userConfig": {
     "version": 1,

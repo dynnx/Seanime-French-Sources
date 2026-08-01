@@ -7,7 +7,7 @@
   "type": "anime-torrent-provider",
   "description": "Anime torrents from Nyaa, filtered to French releases (VOSTFR / VF / MULTI). Nyaa is a public tracker, so this needs NO passkey and hands Seanime real magnet links. Searches the 'Non-English-translated' category by default; toggle the French filter, category, sort, and mirror in the settings.",
   "author": "dynnx",
-  "icon": "https://www.google.com/s2/favicons?domain=nyaa.si&sz=128",
+  "icon": "https://raw.githubusercontent.com/dynnx/Seanime-French-Sources/main/FR%20I%20Nyaa/icon-nyaa.png",
   "website": "https://nyaa.si",
   "readme": "https://raw.githubusercontent.com/dynnx/Seanime-French-Sources/main/README.md",
   "lang": "fr",

@@ -1,61 +1,103 @@
-# Nyaa (French) — Seanime anime torrent provider
+# Seanime French Sources
 
-An anime torrent provider for [Seanime](https://seanime.rahim.app/) that pulls from **[Nyaa](https://nyaa.si)** and keeps the **French** releases (VOSTFR / VF / MULTI / FRENCH).
+![Seanime](https://img.shields.io/badge/Seanime-extensions-5A45FF) ![Language](https://img.shields.io/badge/audio-VF%20%2F%20VOSTFR-blue) ![Extensions](https://img.shields.io/badge/extensions-4-success)
 
-Built as the replacement for the YggTorrent provider after YggTorrent was hacked and permanently shut down in March 2026, taking the `yggapi.eu` proxy down with it. Two things make this version nicer to live with:
+French sources for [Seanime](https://seanime.rahim.app/) — streaming, torrents and manga, all tuned for **VF / VOSTFR** out of the box. No accounts, no passkeys.
 
-- **No passkey.** Nyaa is a *public* tracker, so there's nothing to configure — install it and search.
-- **No proxy.** It talks to Nyaa directly and hands Seanime real **magnet links** (built from the info hash in Nyaa's RSS) plus the direct `.torrent` URL. Nothing fragile in the middle to go dark on you.
+| Extension | Type | What you get | Version |
+|---|---|---|---|
+| [Anime-Sama](#-anime-sama--streaming) | Online streaming | VOSTFR / VF episodes from anime-sama.to | 1.2.0 |
+| [Nyaa (French)](#-nyaa-french--torrents) | Anime torrents | Nyaa filtered to French releases, real magnet links | 1.1.1 |
+| [Torrent9](#-torrent9--torrents) | Anime torrents | French public torrents (OxTorrent successor) | 1.0.0 |
+| [SushiScan](#-sushiscan--manga) | Manga | French scans from sushiscan.fr | 1.2.0 |
 
 ---
 
 ## Install
 
-**Option A — try it fast (Playground)**
-1. Seanime -> **Extensions** -> **Playground**.
-2. Set type to **Anime Torrent Provider**, language **TypeScript**.
-3. Paste the contents of `nyaa-fr.ts`, hit **Run**, and test a search (e.g. media *Kanojo, Okarishimasu*, method *smartSearch*).
+Same three steps for every extension:
 
-**Option B — install for real (recommended)**
-1. Put `nyaa-fr.json` somewhere Seanime can fetch it over HTTP — a GitHub repo or a Gist, using the **Raw** file URL.
-2. Seanime -> **Extensions** -> **Add Extension** -> paste that raw URL.
-3. It appears in your provider list. Open its settings if you want to change any defaults, then set it as a torrent provider for your library.
+1. Copy the extension's **manifest URL** below.
+2. In Seanime: **Extensions → Add Extension** → paste the URL.
+3. It appears in your provider list — pick it as a source for your library.
 
-There's nothing you *have* to configure — the defaults are tuned for French anime out of the box.
+Everything works with default settings. TypeScript sources (`.ts`) can also be pasted into **Extensions → Playground** to test before installing.
 
 ---
 
-## Settings
+## 📺 Anime-Sama — streaming
 
-| Setting | Default | What it does |
+Stream French anime (VOSTFR / VF) from Anime-Sama. Search returns **one entry per season**, so episode numbers line up with Seanime. Playback resolves **vidmoly** (HLS) and **sibnet** (MP4) embeds.
+
+```
+https://raw.githubusercontent.com/dynnx/Seanime-French-Sources/main/FR%20l%20Anime%20Sama/anime-sama-fr.json
+```
+
+| Setting | Default | Notes |
 |---|---|---|
-| **French only** | On | Keeps only releases tagged VOSTFR / VF / MULTI / FRENCH. Turn off to see every language in the category. |
-| **Audio preference** | Prefer VF, then VOSTFR | Which track auto-select grabs first. "Prefer VF" picks a French dub when one exists and falls back to VOSTFR; flip it to prefer French subs instead. All results still show for manual picking. |
-| **Category** | Non-English-translated (`1_3`) | Nyaa category to search. `1_3` is where French subs live. "All anime" (`1_0`) casts the widest net and also catches French MULTI releases filed under other categories. "English-translated" (`1_2`) if you want English too. |
-| **Sort** | Seeders | Seeders (best for streaming), Newest, Most downloaded, or Largest. |
-| **Trusted only** | Off | Restricts to trusted uploaders. Cuts junk but drops *most* French results — leave off unless you're drowning in fakes. |
-| **Base URL** | `https://nyaa.si` | Only change this if nyaa.si is blocked for you and you want to point at a mirror. |
+| Base URL | `https://anime-sama.to` | Change only if the domain moves or is blocked. |
 
 ---
 
-## How it works / tips
+## 🧲 Nyaa (French) — torrents
 
-- **Auto-select prefers VF, then VOSTFR** (configurable). Every result is classified — VF (French dub), MULTI (usually includes a dub), VOSTFR (French subs), or other — sorted by that preference, and the top pick of the best available track is flagged so Seanime grabs it automatically. The rest still appear for manual picking.
-- **Season & episode matching.** The provider does **not** guess a season number and put it in the search box (that produced wrong-season results). It searches plain title variants (romaji + English) and filters results to the right season/episode instead: on a first season it drops releases tagged as a later season (`S02`+, "Season 2", "Saison 2") and single episodes numbered past the season length; on a sequel it keeps episodes within the season's range. For a specific episode it asks Nyaa for **both** the seasonal number and its absolute equivalent (`episode + absoluteSeasonOffset`), keeps only matches, and converts absolute numbers back to seasonal so they line up with Seanime. **Regular search** runs your query (or the media title) through the French filter.
-- **If a show returns nothing**, it's almost always French availability, not a bug. Try, in order: switch **Category** to "All anime", or turn **French only** off to confirm the title exists on Nyaa at all. Popular/seasonal shows are reliably subbed in French; niche or older titles can be spotty.
-- **Batches** (full seasons / `01-12` / "Complete") are detected and flagged so Seanime's batch toggle works.
-- Sizes, dates, seeders/leechers, release group and resolution are parsed per result so Seanime's sorting and episode matching behave normally.
+Anime torrents from [Nyaa](https://nyaa.si), filtered to **VOSTFR / VF / MULTI / FRENCH** releases. Built as the replacement for the YggTorrent provider after YggTorrent shut down in March 2026 — and nicer to live with: Nyaa is a **public** tracker (no passkey) and the provider hands Seanime **real magnet links** built from the info hash, plus the direct `.torrent` URL. No proxy in the middle.
+
+```
+https://raw.githubusercontent.com/dynnx/Seanime-French-Sources/main/FR%20I%20Nyaa/nyaa-fr.json
+```
+
+| Setting | Default | Notes |
+|---|---|---|
+| French only | On | Turn off to see every language in the category. |
+| Audio preference | Prefer VF, then VOSTFR | Which track auto-select grabs first; all results still show. |
+| Category | Non-English-translated (`1_3`) | Where French subs live. "All anime" casts a wider net. |
+| Sort | Seeders | Best for streaming. Also: newest, most downloaded, largest. |
+| Trusted only | Off | Cuts junk but drops most French results — leave off. |
+| Base URL | `https://nyaa.si` | Point at a mirror if nyaa.si is blocked for you. |
+
+**How matching works:** the provider never guesses a season number into the query (that produced wrong-season results). It searches plain title variants and filters afterwards — dropping later-season releases on a first season, keeping in-range episodes on sequels, and querying both seasonal **and** absolute episode numbers so numbering always lines up. Batches (`01-12`, "Complete") are detected so Seanime's batch toggle works.
+
+**No results?** It's almost always French availability, not a bug. Try category "All anime", then turn "French only" off to confirm the title exists on Nyaa at all.
 
 ---
 
-## Honest limitations
+## 🧲 Torrent9 — torrents
 
-- **French depth.** Nyaa's French catalog is smaller than YggTorrent's was. You'll usually find VOSTFR for current and popular series; complete French coverage of long-running or obscure shows isn't guaranteed. For maximum French depth you'd need the decentralized UTOPEER/U2P route (self-hosted) — heavier setup; ask if you want to go there.
-- **MULTI is not guaranteed French.** "MULTI" is treated as French-likely (French scene releases use it for multi-language), but a given MULTI release could pair English with a non-French track. Rare, but possible.
-- **nyaa.si access.** If your network/ISP blocks nyaa.si, set a mirror in **Base URL**.
+[Torrent9](https://www6.torrent9.to) (French public torrents, successor of the dead OxTorrent) as a second torrent source alongside Nyaa. No account needed. It's a general-purpose site, so it shines with a **custom search query** — auto-select accuracy is lower than Nyaa's.
+
+```
+https://raw.githubusercontent.com/dynnx/Seanime-French-Sources/main/FR%20I%20Torrent%209/torrent9.json
+```
+
+| Setting | Default | Notes |
+|---|---|---|
+| Base URL | `https://www6.torrent9.to` | Torrent9 mirrors rotate — set a working one if this dies. |
 
 ---
+
+## 📖 SushiScan — manga
+
+French manga / manhwa / manhua / BD scans from [sushiscan.fr](https://sushiscan.fr) — a large catalog that's usually the most up to date on ongoing series.
+
+```
+https://raw.githubusercontent.com/dynnx/Seanime-French-Sources/main/FR%20I%20Sushi%20Scan/manifest.json
+```
+
+> Only the `.fr` domain is supported — `sushiscan.net` sits behind Cloudflare bot protection and can't be scraped.
+
+---
+
+## Troubleshooting
+
+- **A site stopped working** → its domain probably rotated. Set the new one in the extension's Base URL setting.
+- **Nothing found for a show** → check French availability first (see the Nyaa tips above). Popular and seasonal shows are reliably covered; niche or older titles can be spotty.
+- **Streaming episode won't play** → try the other server if the source offers one; embed hosts go down independently of the catalog site.
 
 ## Updating
 
-Edit `nyaa-fr.ts`, bump `version` in `make_manifest_nyaa.js`, re-run `node make_manifest_nyaa.js` to regenerate `nyaa-fr.json`, and Seanime will pick up the new version from the same URL.
+Edit the `.ts` / `.js` source, bump `version` in the manifest, and Seanime picks up the new version from the same URL.
+
+---
+
+*These extensions host no content. They scrape publicly reachable third-party sites; availability and legality of those sites depend on your jurisdiction.*
